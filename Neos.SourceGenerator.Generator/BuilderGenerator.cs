@@ -15,6 +15,7 @@ public class BuilderGenerator : ISourceGenerator
 {
     public void Initialize(GeneratorInitializationContext context)
     {
+        // Debugger.Launch();
         context.RegisterForSyntaxNotifications(() => new BuilderAttributeReceiver());
     }
 
@@ -24,33 +25,43 @@ public class BuilderGenerator : ISourceGenerator
         BuilderAttributeReceiver syntaxReceiver = (BuilderAttributeReceiver)context.SyntaxReceiver;
         if (syntaxReceiver is null) return;
         // get the recorded mapper class
-        foreach (var cds in syntaxReceiver.ClassesWithBuilder)
+        foreach (var tds in syntaxReceiver.ClassesWithBuilder)
         {
-            var builderDef = GetBuilderDef(cds);
+            var builderDef = GetBuilderDef(tds);
             var builderSource = SourceText.From(builderDef, Encoding.UTF8);
-            context.AddSource($"{cds.Identifier}.Builder.cs", builderSource);
+            context.AddSource($"{tds.Identifier}.Builder.cs", builderSource);
         }
     }
 
-    private static string GetBuilderDef(ClassDeclarationSyntax cds)
+    private static string GetBuilderDef(TypeDeclarationSyntax tds)
     {
-        var classNamespace = cds.Parent as FileScopedNamespaceDeclarationSyntax;
-
+        var classNamespace = tds.Parent as FileScopedNamespaceDeclarationSyntax;
         return @$"
 namespace {classNamespace?.Name.ToString()};
-public partial class {cds.Identifier}{{
+{tds.Modifiers.ToFullString()} {GetTypeName(tds)} {tds.Identifier}{{
 
     public class Builder{{
-        private {cds.Identifier} _entity = new {cds.Identifier}();
-        public {cds.Identifier} Get{cds.Identifier}() => _entity;
-        {GenerateWithMethods(cds)}
+        private {tds.Identifier} _entity = new {tds.Identifier}();
+        public {tds.Identifier} Get{tds.Identifier}() => _entity;
+        {GenerateWithMethods(tds)}
     }}
 }}";
     }
 
-    private static string GenerateWithMethods(ClassDeclarationSyntax cds)
+    private static string GetTypeName(TypeDeclarationSyntax tds)
     {
-        return string.Join("\n", cds.Members.OfType<PropertyDeclarationSyntax>().Select(p =>
+        return tds switch
+        {
+            ClassDeclarationSyntax => "class",
+            InterfaceDeclarationSyntax => "interface",
+            RecordDeclarationSyntax => "record",
+            _ => throw new InvalidOperationException($"{tds.Kind()} is not handled by builder generator")
+        };
+    }
+
+    private static string GenerateWithMethods(TypeDeclarationSyntax tds)
+    {
+        return string.Join("\n", tds.Members.OfType<PropertyDeclarationSyntax>().Select(p =>
             $@"
         public Builder With{p.Identifier}({p.Type.ToString()} value){{
             _entity.{p.Identifier}=value;
@@ -61,16 +72,16 @@ public partial class {cds.Identifier}{{
 
     class BuilderAttributeReceiver : ISyntaxReceiver
     {
-        public IImmutableSet<ClassDeclarationSyntax> ClassesWithBuilder => _classesWithBuilder.ToImmutableHashSet();
+        public IImmutableSet<TypeDeclarationSyntax> ClassesWithBuilder => _classesWithBuilder.ToImmutableHashSet();
 
-        private readonly HashSet<ClassDeclarationSyntax> _classesWithBuilder = new();
+        private readonly HashSet<TypeDeclarationSyntax> _classesWithBuilder = new();
 
         public void OnVisitSyntaxNode(SyntaxNode syntaxNode)
         {
             if (syntaxNode is AttributeSyntax attSyntax && attSyntax.Name.ToString() == "Builder"
-                                                        && attSyntax.Parent?.Parent is ClassDeclarationSyntax cds)
+                                                        && attSyntax.Parent?.Parent is TypeDeclarationSyntax tds)
             {
-                _classesWithBuilder.Add(cds);
+                    _classesWithBuilder.Add(tds);
             }
         }
     }
